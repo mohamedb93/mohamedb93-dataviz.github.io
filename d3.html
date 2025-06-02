@@ -1,0 +1,505 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Austin Weather Dashboard</title>
+    <script src="https://d3js.org/d3.v7.min.js"></script>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            margin: 0;
+            padding: 20px;
+            background-color: #f5f5f5;
+        }
+        .dashboard {
+            max-width: 1200px;
+            margin: 0 auto;
+        }
+        .dashboard-title {
+            text-align: center;
+            color: #333;
+            margin-bottom: 30px;
+        }
+        .chart-container {
+            background: white;
+            border-radius: 8px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+            padding: 20px;
+            margin-bottom: 30px;
+        }
+        .chart-title {
+            font-size: 18px;
+            font-weight: bold;
+            margin-bottom: 15px;
+            color: #444;
+        }
+        .chart {
+            width: 100%;
+            height: 300px;
+        }
+        .grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 20px;
+        }
+        .tooltip {
+            position: absolute;
+            padding: 8px;
+            background: rgba(0, 0, 0, 0.8);
+            color: white;
+            border-radius: 4px;
+            pointer-events: none;
+            font-size: 12px;
+        }
+    </style>
+</head>
+<body>
+    <div class="dashboard">
+        <h1 class="dashboard-title">Austin Weather Dashboard (2013-2016)</h1>
+
+        <div class="grid">
+            <div class="chart-container">
+                <div class="chart-title">Average Temperature Trends</div>
+                <div id="temperature-chart" class="chart"></div>
+            </div>
+
+            <div class="chart-container">
+                <div class="chart-title">Precipitation by Month</div>
+                <div id="precipitation-chart" class="chart"></div>
+            </div>
+
+            <div class="chart-container">
+                <div class="chart-title">Weather Events Frequency</div>
+                <div id="events-chart" class="chart"></div>
+            </div>
+
+            <div class="chart-container">
+                <div class="chart-title">Temperature vs Humidity</div>
+                <div id="scatter-chart" class="chart"></div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // Load the CSV data
+        d3.csv("/Users/mohamedbassimbo/Downloads/dtsc 630/austin_weather.csv").then(function(data) {
+            // Parse dates and numeric values
+            const parseDate = d3.timeParse("%Y-%m-%d");
+
+            data.forEach(function(d) {
+                d.Date = parseDate(d.Date);
+                d.TempAvgF = +d.TempAvgF;
+                d.PrecipitationSumInches = d.PrecipitationSumInches === "T" ? 0.005 : +d.PrecipitationSumInches;
+                d.HumidityAvgPercent = +d.HumidityAvgPercent;
+                d.month = d3.timeFormat("%b")(d.Date);
+                d.year = d3.timeFormat("%Y")(d.Date);
+
+                // Extract events
+                if (d.Events) {
+                    d.events = d.Events.split(/\s*,\s*/).filter(e => e.trim() !== "");
+                } else {
+                    d.events = [];
+                }
+            });
+
+            // Create tooltip
+            const tooltip = d3.select("body").append("div")
+                .attr("class", "tooltip")
+                .style("opacity", 0);
+
+            // 1. Temperature Trends Line Chart
+            const tempMargin = {top: 20, right: 30, bottom: 40, left: 50};
+            const tempWidth = 550 - tempMargin.left - tempMargin.right;
+            const tempHeight = 300 - tempMargin.top - tempMargin.bottom;
+
+            const tempSvg = d3.select("#temperature-chart")
+                .append("svg")
+                .attr("width", tempWidth + tempMargin.left + tempMargin.right)
+                .attr("height", tempHeight + tempMargin.top + tempMargin.bottom)
+                .append("g")
+                .attr("transform", `translate(${tempMargin.left},${tempMargin.top})`);
+
+            // Group data by month and calculate average temperature
+            const monthlyTempData = d3.rollup(data,
+                v => d3.mean(v, d => d.TempAvgF),
+                d => d3.timeFormat("%Y-%m")(d.Date)
+            );
+
+            const tempData = Array.from(monthlyTempData, ([key, value]) => {
+                return {
+                    date: d3.timeParse("%Y-%m")(key),
+                    temp: value
+                };
+            }).sort((a, b) => a.date - b.date);
+
+            // X scale
+            const xTemp = d3.scaleTime()
+                .domain(d3.extent(tempData, d => d.date))
+                .range([0, tempWidth]);
+
+            // Y scale
+            const yTemp = d3.scaleLinear()
+                .domain([0, d3.max(tempData, d => d.temp) + 10])
+                .range([tempHeight, 0]);
+
+            // Line generator
+            const line = d3.line()
+                .x(d => xTemp(d.date))
+                .y(d => yTemp(d.temp));
+
+            // Add the line
+            tempSvg.append("path")
+                .datum(tempData)
+                .attr("fill", "none")
+                .attr("stroke", "steelblue")
+                .attr("stroke-width", 2)
+                .attr("d", line);
+
+            // Add X axis
+            tempSvg.append("g")
+                .attr("transform", `translate(0,${tempHeight})`)
+                .call(d3.axisBottom(xTemp).ticks(5));
+
+            // Add Y axis
+            tempSvg.append("g")
+                .call(d3.axisLeft(yTemp));
+
+            // Add X axis label
+            tempSvg.append("text")
+                .attr("transform", `translate(${tempWidth/2}, ${tempHeight + 35})`)
+                .style("text-anchor", "middle")
+                .text("Date");
+
+            // Add Y axis label
+            tempSvg.append("text")
+                .attr("transform", "rotate(-90)")
+                .attr("y", 0 - tempMargin.left)
+                .attr("x", 0 - (tempHeight / 2))
+                .attr("dy", "1em")
+                .style("text-anchor", "middle")
+                .text("Temperature (°F)");
+
+            // Add dots with tooltips
+            tempSvg.selectAll(".dot")
+                .data(tempData)
+                .enter().append("circle")
+                .attr("class", "dot")
+                .attr("cx", d => xTemp(d.date))
+                .attr("cy", d => yTemp(d.temp))
+                .attr("r", 3)
+                .attr("fill", "steelblue")
+                .on("mouseover", function(event, d) {
+                    tooltip.transition()
+                        .duration(200)
+                        .style("opacity", .9);
+                    tooltip.html(`Date: ${d3.timeFormat("%b %Y")(d.date)}<br>Avg Temp: ${d.temp.toFixed(1)}°F`)
+                        .style("left", (event.pageX + 5) + "px")
+                        .style("top", (event.pageY - 28) + "px");
+                })
+                .on("mouseout", function() {
+                    tooltip.transition()
+                        .duration(500)
+                        .style("opacity", 0);
+                });
+
+            // 2. Precipitation by Month Bar Chart
+            const precipMargin = {top: 20, right: 30, bottom: 40, left: 50};
+            const precipWidth = 550 - precipMargin.left - precipMargin.right;
+            const precipHeight = 300 - precipMargin.top - precipMargin.bottom;
+
+            const precipSvg = d3.select("#precipitation-chart")
+                .append("svg")
+                .attr("width", precipWidth + precipMargin.left + precipMargin.right)
+                .attr("height", precipHeight + precipMargin.top + precipMargin.bottom)
+                .append("g")
+                .attr("transform", `translate(${precipMargin.left},${precipMargin.top})`);
+
+            // Group data by month and sum precipitation
+            const monthlyPrecipData = d3.rollup(data,
+                v => d3.sum(v, d => d.PrecipitationSumInches),
+                d => d.month
+            );
+
+            const precipData = Array.from(monthlyPrecipData, ([key, value]) => {
+                return {
+                    month: key,
+                    precip: value
+                };
+            }).sort((a, b) => {
+                // Sort by month order
+                const months = ["Jan", "Feb", "Mar", "Apr", "May", "Jun",
+                                "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+                return months.indexOf(a.month) - months.indexOf(b.month);
+            });
+
+            // X scale
+            const xPrecip = d3.scaleBand()
+                .domain(precipData.map(d => d.month))
+                .range([0, precipWidth])
+                .padding(0.2);
+
+            // Y scale
+            const yPrecip = d3.scaleLinear()
+                .domain([0, d3.max(precipData, d => d.precip)])
+                .range([precipHeight, 0]);
+
+            // Add bars
+            precipSvg.selectAll(".bar")
+                .data(precipData)
+                .enter().append("rect")
+                .attr("class", "bar")
+                .attr("x", d => xPrecip(d.month))
+                .attr("width", xPrecip.bandwidth())
+                .attr("y", d => yPrecip(d.precip))
+                .attr("height", d => precipHeight - yPrecip(d.precip))
+                .attr("fill", "steelblue")
+                .on("mouseover", function(event, d) {
+                    tooltip.transition()
+                        .duration(200)
+                        .style("opacity", .9);
+                    tooltip.html(`Month: ${d.month}<br>Precipitation: ${d.precip.toFixed(2)} inches`)
+                        .style("left", (event.pageX + 5) + "px")
+                        .style("top", (event.pageY - 28) + "px");
+                })
+                .on("mouseout", function() {
+                    tooltip.transition()
+                        .duration(500)
+                        .style("opacity", 0);
+                });
+
+            // Add X axis
+            precipSvg.append("g")
+                .attr("transform", `translate(0,${precipHeight})`)
+                .call(d3.axisBottom(xPrecip));
+
+            // Add Y axis
+            precipSvg.append("g")
+                .call(d3.axisLeft(yPrecip));
+
+            // Add X axis label
+            precipSvg.append("text")
+                .attr("transform", `translate(${precipWidth/2}, ${precipHeight + 35})`)
+                .style("text-anchor", "middle")
+                .text("Month");
+
+            // Add Y axis label
+            precipSvg.append("text")
+                .attr("transform", "rotate(-90)")
+                .attr("y", 0 - precipMargin.left)
+                .attr("x", 0 - (precipHeight / 2))
+                .attr("dy", "1em")
+                .style("text-anchor", "middle")
+                .text("Precipitation (inches)");
+
+            // 3. Weather Events Pie Chart
+            const eventsMargin = {top: 20, right: 30, bottom: 40, left: 30};
+            const eventsWidth = 550 - eventsMargin.left - eventsMargin.right;
+            const eventsHeight = 300 - eventsMargin.top - eventsMargin.bottom;
+            const radius = Math.min(eventsWidth, eventsHeight) / 2;
+
+            const eventsSvg = d3.select("#events-chart")
+                .append("svg")
+                .attr("width", eventsWidth + eventsMargin.left + eventsMargin.right)
+                .attr("height", eventsHeight + eventsMargin.top + eventsMargin.bottom)
+                .append("g")
+                .attr("transform", `translate(${eventsWidth/2 + eventsMargin.left},${eventsHeight/2 + eventsMargin.top})`);
+
+            // Count weather events
+            const eventCounts = {};
+            data.forEach(d => {
+                d.events.forEach(event => {
+                    if (event in eventCounts) {
+                        eventCounts[event]++;
+                    } else {
+                        eventCounts[event] = 1;
+                    }
+                });
+            });
+
+            // Convert to array for pie chart
+            const eventsData = Object.keys(eventCounts).map(key => {
+                return { event: key, count: eventCounts[key] };
+            }).sort((a, b) => b.count - a.count);
+
+            // Only show top 5 events, group others as "Other"
+            const topEvents = eventsData.slice(0, 5);
+            const otherCount = d3.sum(eventsData.slice(5), d => d.count);
+            if (otherCount > 0) {
+                topEvents.push({ event: "Other", count: otherCount });
+            }
+
+            // Color scale
+            const color = d3.scaleOrdinal()
+                .domain(topEvents.map(d => d.event))
+                .range(d3.schemeCategory10);
+
+            // Pie generator
+            const pie = d3.pie()
+                .value(d => d.count)
+                .sort(null);
+
+            const arc = d3.arc()
+                .innerRadius(0)
+                .outerRadius(radius);
+
+            const arcs = eventsSvg.selectAll(".arc")
+                .data(pie(topEvents))
+                .enter().append("g")
+                .attr("class", "arc");
+
+            // Add slices
+            arcs.append("path")
+                .attr("d", arc)
+                .attr("fill", d => color(d.data.event))
+                .on("mouseover", function(event, d) {
+                    tooltip.transition()
+                        .duration(200)
+                        .style("opacity", .9);
+                    tooltip.html(`Event: ${d.data.event}<br>Count: ${d.data.count}`)
+                        .style("left", (event.pageX + 5) + "px")
+                        .style("top", (event.pageY - 28) + "px");
+                })
+                .on("mouseout", function() {
+                    tooltip.transition()
+                        .duration(500)
+                        .style("opacity", 0);
+                });
+
+            // Add labels
+            arcs.append("text")
+                .attr("transform", d => `translate(${arc.centroid(d)})`)
+                .attr("dy", "0.35em")
+                .style("text-anchor", "middle")
+                .style("font-size", "10px")
+                .text(d => d.data.count > 50 ? d.data.event : "");
+
+            // Add legend
+            const legend = eventsSvg.selectAll(".legend")
+                .data(topEvents)
+                .enter().append("g")
+                .attr("class", "legend")
+                .attr("transform", (d, i) => `translate(${radius + 20},${i * 20 - radius/2})`);
+
+            legend.append("rect")
+                .attr("width", 18)
+                .attr("height", 18)
+                .attr("fill", d => color(d.event));
+
+            legend.append("text")
+                .attr("x", 24)
+                .attr("y", 9)
+                .attr("dy", ".35em")
+                .style("font-size", "10px")
+                .text(d => `${d.event} (${d.count})`);
+
+            // 4. Temperature vs Humidity Scatter Plot
+            const scatterMargin = {top: 20, right: 30, bottom: 40, left: 50};
+            const scatterWidth = 550 - scatterMargin.left - scatterMargin.right;
+            const scatterHeight = 300 - scatterMargin.top - scatterMargin.bottom;
+
+            const scatterSvg = d3.select("#scatter-chart")
+                .append("svg")
+                .attr("width", scatterWidth + scatterMargin.left + scatterMargin.right)
+                .attr("height", scatterHeight + scatterMargin.top + scatterMargin.bottom)
+                .append("g")
+                .attr("transform", `translate(${scatterMargin.left},${scatterMargin.top})`);
+
+            // Sample data points (using every 10th point for better visualization)
+            const scatterData = data.filter((d, i) => i % 10 === 0);
+
+            // X scale (Temperature)
+            const xScatter = d3.scaleLinear()
+                .domain([0, d3.max(scatterData, d => d.TempAvgF) + 10])
+                .range([0, scatterWidth]);
+
+            // Y scale (Humidity)
+            const yScatter = d3.scaleLinear()
+                .domain([0, 100])
+                .range([scatterHeight, 0]);
+
+            // Color scale by season
+            const seasonColor = d3.scaleOrdinal()
+                .domain(["Winter", "Spring", "Summer", "Fall"])
+                .range(["#1f77b4", "#2ca02c", "#d62728", "#ff7f0e"]);
+
+            // Add dots
+            scatterSvg.selectAll(".dot")
+                .data(scatterData)
+                .enter().append("circle")
+                .attr("class", "dot")
+                .attr("cx", d => xScatter(d.TempAvgF))
+                .attr("cy", d => yScatter(d.HumidityAvgPercent))
+                .attr("r", 5)
+                .attr("fill", d => {
+                    const month = d.Date.getMonth();
+                    if (month >= 2 && month <= 4) return seasonColor("Spring");
+                    if (month >= 5 && month <= 7) return seasonColor("Summer");
+                    if (month >= 8 && month <= 10) return seasonColor("Fall");
+                    return seasonColor("Winter");
+                })
+                .on("mouseover", function(event, d) {
+                    tooltip.transition()
+                        .duration(200)
+                        .style("opacity", .9);
+                    tooltip.html(`Date: ${d3.timeFormat("%b %d, %Y")(d.Date)}<br>Temp: ${d.TempAvgF}°F<br>Humidity: ${d.HumidityAvgPercent}%`)
+                        .style("left", (event.pageX + 5) + "px")
+                        .style("top", (event.pageY - 28) + "px");
+                })
+                .on("mouseout", function() {
+                    tooltip.transition()
+                        .duration(500)
+                        .style("opacity", 0);
+                });
+
+            // Add X axis
+            scatterSvg.append("g")
+                .attr("transform", `translate(0,${scatterHeight})`)
+                .call(d3.axisBottom(xScatter));
+
+            // Add Y axis
+            scatterSvg.append("g")
+                .call(d3.axisLeft(yScatter));
+
+            // Add X axis label
+            scatterSvg.append("text")
+                .attr("transform", `translate(${scatterWidth/2}, ${scatterHeight + 35})`)
+                .style("text-anchor", "middle")
+                .text("Average Temperature (°F)");
+
+            // Add Y axis label
+            scatterSvg.append("text")
+                .attr("transform", "rotate(-90)")
+                .attr("y", 0 - scatterMargin.left)
+                .attr("x", 0 - (scatterHeight / 2))
+                .attr("dy", "1em")
+                .style("text-anchor", "middle")
+                .text("Average Humidity (%)");
+
+            // Add legend
+            const legendScatter = scatterSvg.append("g")
+                .attr("transform", `translate(${scatterWidth - 100}, 10)`);
+
+            const seasons = ["Winter", "Spring", "Summer", "Fall"];
+            seasons.forEach((season, i) => {
+                const legendItem = legendScatter.append("g")
+                    .attr("transform", `translate(0, ${i * 20})`);
+
+                legendItem.append("rect")
+                    .attr("width", 18)
+                    .attr("height", 18)
+                    .attr("fill", seasonColor(season));
+
+                legendItem.append("text")
+                    .attr("x", 24)
+                    .attr("y", 9)
+                    .attr("dy", ".35em")
+                    .style("font-size", "10px")
+                    .text(season);
+            });
+        }).catch(function(error) {
+            console.error("Error loading the data:", error);
+        });
+    </script>
+</body>
+</html>
